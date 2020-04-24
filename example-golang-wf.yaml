@@ -1,0 +1,156 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: example-golang-wf-
+
+spec:
+  entrypoint: example-golang
+  arguments:
+    parameters:
+    - name: repo
+      value: https://github.com/colinlabs/argo-demo.git
+    - name: revision
+      value: master
+
+  templates:
+  - name: example-golang
+    retryStrategy:
+      limit: 2
+    steps:
+    - - name: checkout
+        template: checkout
+    - - name: build
+        template: build
+        arguments:
+          artifacts:
+          - name: source
+            from: "{{steps.checkout.outputs.artifacts.source}}"
+    - - name: test-unit
+        template: test-unit
+        arguments:
+          artifacts:
+          - name: source
+            from: "{{steps.checkout.outputs.artifacts.source}}"
+          parameters:
+          - name: image
+            value: "{{item.image}}"
+          - name: tag
+            value: "{{item.tag}}"
+        withItems:
+        - { image: 'golang', tag: '1.14.2' }
+        - { image: 'golang', tag: '1.13.10' }
+        - { image: 'golang', tag: '1.12.17' }
+  
+    - - name: test-benchmark
+        template: test-benchmark
+        arguments:
+          artifacts:
+          - name: source
+            from: "{{steps.checkout.outputs.artifacts.source}}"
+    - - name: docker-build
+        template: docker-build
+        arguments:
+          artifacts:
+          - name: source
+            from: "{{steps.checkout.outputs.artifacts.source}}"
+          - name: example-golang
+            from: "{{steps.build.outputs.artifacts.example-golang}}"
+  - name: checkout
+    inputs:
+      artifacts:
+      - name: source
+        path: /src
+        git:
+          repo: "{{workflow.parameters.repo}}"
+          revision: "{{workflow.parameters.revision}}"
+    outputs:
+      artifacts:
+      - name: source
+        path: /src
+    container:
+      image: golang:1.14.2
+      command: ['bash','-c']
+      workingDir: /src
+      args: ["ls -la && git status && git log"]
+
+  - name: build
+    inputs:
+      artifacts:
+      - name: source
+        path: /go/src
+    outputs:
+      artifacts:
+      - name: example-golang
+        path: /go/bin
+    container:
+      image: golang:1.14.2-alpine
+      command: ["sh", "-c"]
+      workingDir: /go/src/example-golang
+      args: ['
+        go install;
+        ls -lR;
+      ']
+
+  - name: test-unit
+    inputs:
+      artifacts:
+      - name: source
+        path: /go/src
+      parameters:
+      - name: image
+      - name: tag
+    container:
+      image: "{{inputs.parameters.image}}:{{inputs.parameters.tag}}"
+      command: ["bash", "-c"]
+      workingDir: /go/src/example-golang
+      args: ['
+        go test -v
+      ']
+  - name: test-benchmark
+    inputs:
+      artifacts:
+      - name: source
+        path: /go/src
+    container:
+      image: golang:1.14.2
+      command: ["bash", "-c"]
+      workingDir: /go/src/example-golang
+      args: ['
+        go test --bench=.
+      ']
+  - name: docker-build
+    volumes:
+    - name: dockerhub
+      secret:
+        secretName: dockerhub
+    inputs:
+      artifacts:
+      - name: source
+        path: /go/src
+      - name: example-golang
+        path: /go/bin
+    script:
+      image: docker:17.03
+      command: [sh]
+      workingDir: /go/src/example-golang
+      source: |
+        set -x
+        ls -lR
+        ls -la /root/.docker
+        until docker ps; do sleep 3; done;
+        cp /go/bin/example-golang .
+        tag=`date '+%m%d%H%M'`
+        image="colinlabs/argo-example-golang:$tag"
+        docker build -t $image .
+        docker push $image
+      env:
+      - name: DOCKER_HOST
+        value: 127.0.0.1
+      volumeMounts:
+        - name: dockerhub
+          mountPath: "/root/.docker"
+    sidecars:
+    - name: dind
+      image: docker:17.03-dind
+      securityContext:
+        privileged: true  

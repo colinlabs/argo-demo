@@ -1,0 +1,20 @@
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: workflow-controller-configmap
+data:
+  config: |
+    containerRuntimeExecutor: pns
+    executor:
+      imagePullPolicy: IfNotPresent
+    artifactRepository:
+      s3:
+        bucket: my-bucket
+        endpoint: argo-artifacts:9000
+        insecure: true
+        accessKeySecret:
+          name: argo-artifacts
+          key: accesskey
+        secretKeySecret:
+          name: argo-artifacts
+          key: secretkey

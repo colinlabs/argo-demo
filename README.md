@@ -1,2 +1,2 @@
 # argo-demo
-argo workflow &amp; argo cd demo
+argo workflow and argo cd demo
